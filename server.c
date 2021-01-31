@@ -1,7 +1,10 @@
 /*
-Based on the requirements of this OS class project:
-http://pages.cs.wisc.edu/~dusseau/Classes/CS537-F07/Projects/P2/p2.html
-TODO: Clean up debug output.
+Created by Akshay Parkala
+
+For COEN 317 Distributed Systems
+
+TODO:   Implement a web server which accepts HTTP GET requests and sends
+        corresponding response
 */
 
 #include <netinet/in.h>
@@ -65,7 +68,7 @@ void *connection_handler(void *args){
 
 void getHttpRequest(int sockfd, char *buf){
   int numbytes;
-  
+
   check((numbytes = recv(sockfd, buf, 1023, 0)), "Error while receiving HTTP Request");
 
   buf[numbytes] = '\0';
