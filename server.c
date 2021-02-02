@@ -19,6 +19,8 @@ TODO:   Implement a web server which accepts HTTP GET requests and sends
 #include <sys/stat.h>
 #include <time.h>
 
+char* DOC_ROOT;
+
 
 void check(int no, char* msg){
   if (no < 0){
@@ -87,7 +89,7 @@ int isDirectoryExists(const char *path) {
     return 0;
 }
 
-int checkFilename (char *filename, char *DOC_ROOT) {
+int checkFilename (char *filename) {
   printf("\n\n-----------------Checking requested file status-------------------\n\n");
   char filepath[100];
 
@@ -159,7 +161,7 @@ char* getFileType (char *filename) {
   return filetype;
 }
 
-void sendResponse (int sockfd, int file_status, char *filename, char* DOC_ROOT) {
+void sendResponse (int sockfd, int file_status, char *filename) {
   printf("\n\n-----------------Sending Response-------------------\n\n");
   char header[1024], length_str[100], fpath[100];
   char *content;
@@ -239,7 +241,7 @@ void sendResponse (int sockfd, int file_status, char *filename, char* DOC_ROOT) 
 }
 
 
-void connectionHandler (int sockfd, char* DOC_ROOT) {
+void connectionHandler (int sockfd) {
   printf("\n\n-----------------Handling received connection-------------------\n\n");
   char buf[1024], *first_line, *method, filename[1024], *initial;
   int file_status;
@@ -265,10 +267,10 @@ void connectionHandler (int sockfd, char* DOC_ROOT) {
   if (checkMethod(method) == -1){
     file_status = 5;
   } else {
-    file_status = checkFilename(filename, DOC_ROOT);
+    file_status = checkFilename(filename);
   }
 
-  sendResponse(sockfd, file_status, filename, DOC_ROOT);
+  sendResponse(sockfd, file_status, filename);
   return;
 
 }
@@ -283,7 +285,9 @@ int main(int argc, char* argv[]){
   }
 
   //Retrieving document root and port no
-  char* DOC_ROOT = (char*)malloc(100*sizeof(char));
+  int len = strlen(argv[1]);
+  DOC_ROOT = (char*)malloc(len*sizeof(char));
+  sprintf(DOC_ROOT, "%s", argv[1]);
   int portno;
   sprintf(DOC_ROOT, "%s", argv[1]);
   portno = atoi(argv[2]);
@@ -302,7 +306,7 @@ int main(int argc, char* argv[]){
     check((newsockfd = accept(sockfd, (struct sockaddr *) &client_addr, (socklen_t *) &cli_len)), "Error accepting connection");
     printf("\nNew socket: %d\n", newsockfd);
 
-    connectionHandler(newsockfd, DOC_ROOT);
+    connectionHandler(newsockfd);
 
     close(newsockfd);
 
