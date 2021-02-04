@@ -21,7 +21,7 @@ TODO:   Implement a web server which accepts HTTP GET requests and sends
 #include <pthread.h>
 #include <errno.h>
 
-#define MAXTHREADS 100
+#define MAXTHREADS 10000
 
 char* DOC_ROOT;
 
@@ -76,7 +76,6 @@ int getHttpRequest(int sockfd, char *buf){
     return 0;
   }
   buf[numbytes] = '\0';
-  printf("numbytes: %d\n", numbytes);
   return 1;
 }
 
@@ -103,7 +102,7 @@ int isDirectoryExists(const char *path) {
 }
 
 int checkFilename (char *filename) {
-  printf("\n\n-----------------Checking requested file status-------------------\n\n");
+  //printf("\n\n-----------------Checking requested file status-------------------\n\n");
   char filepath[1024];
 
   strcpy(filepath, DOC_ROOT);
@@ -164,7 +163,7 @@ unsigned char *read_image(FILE* fp){
 
 char *getFileType (char *filename) {
   char *buf = (char *)malloc(12*sizeof(char));
-  printf("\n\n-----------------Getting file type-------------------\n\n");
+
 
   if (strstr(filename, "html")) {
     buf = "text/html";
@@ -194,25 +193,25 @@ char *buildHeader(int file_status, char* filename, int content_length){
 
   switch(file_status){
     case 1:
-      strcpy(buf, "HTTP/1.1 200 OK\n");
+      strcpy(buf, "HTTP/1.0 200 OK\n");
       strcat(buf, "Content-Type: ");
       strcat(buf, filetype);
       strcat(buf, "\n");
       break;
     case 2:
-      strcpy(buf, "HTTP/1.1 404 File Not Found\n");
+      strcpy(buf, "HTTP/1.0 404 File Not Found\n");
       strcat(buf, "Content-Type: text/html\n");
       break;
     case 3:
-      strcpy(buf, "HTTP/1.1 403 Access denied - no permissions\n");
+      strcpy(buf, "HTTP/1.0 403 Access denied - no permissions\n");
       strcat(buf, "Content-Type: text/html\n");
       break;
     case 4:
-      strcpy(buf, "HTTP/1.1 400 Bad Request - cannot request a directory\n");
+      strcpy(buf, "HTTP/1.0 400 Bad Request - cannot request a directory\n");
       strcat(buf, "Content-Type: text/html\n");
       break;
     case 5:
-      strcpy(buf, "HTTP/1.1 400 Bad Request - cannot request a directory\n");
+      strcpy(buf, "HTTP/1.0 400 Bad Request - cannot request a directory\n");
       strcat(buf, "Content-Type: text/html\n");
       break;
     }
@@ -238,9 +237,6 @@ char *buildHeader(int file_status, char* filename, int content_length){
   strcat(buf, "Date: ");
   strcat(buf, time);
   strcat(buf, "\n");
-
-
-
 
   header = (char *)malloc((strlen(buf)+1)*sizeof(char));
   sprintf(header, "%s", buf);
@@ -330,7 +326,7 @@ void sendResponse (int sockfd, int file_status, char *filename) {
     printf("\n\nError while sending HTTP response header.\n");
     exit(0);
   }
-  printf("Sent header");
+
 
   if((strstr(filetype, "image") != NULL) & (file_status == 1)){
     if((numbytes = send(sockfd, image_content, filesize, 0)) == -1) {
@@ -348,8 +344,7 @@ void sendResponse (int sockfd, int file_status, char *filename) {
 
 
 void *connectionHandler (void *sfd) {
-  int sockfd = * (int *)sfd;
-  printf("\n\n-----------------Handling received connection on socket no: %d-------------------\n\n", sockfd);
+  int sockfd = *(int *)sfd;
 
 
   char buf[1024], *first_line, *method, filename[1024], *initial;
@@ -420,7 +415,6 @@ int main(int argc, char* argv[]){
   for (pthread_ctr = 0; pthread_ctr < MAXTHREADS; pthread_ctr++) {
     int newsockfd;
     check((newsockfd = accept(sockfd, (struct sockaddr *) &client_addr, (socklen_t *) &cli_len)), "Error accepting connection");
-    printf("\nNew socket: %d\n", newsockfd);
 
     thread_pool[pthread_ctr] = (pthread_t *) malloc(sizeof(pthread_t));
 
@@ -431,7 +425,7 @@ int main(int argc, char* argv[]){
 
   }
 
-  pthread_join(*thread_pool[99], NULL);
+  pthread_join(*thread_pool[9999], NULL);
   close(sockfd);
 
 }
