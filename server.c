@@ -18,9 +18,14 @@ TODO:   Implement a web server which accepts HTTP GET requests and sends
 #include <unistd.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <pthread.h>
+#include <errno.h>
+
+#define MAXTHREADS 100
 
 char* DOC_ROOT;
 
+extern int errno;
 
 void check(int no, char* msg){
   if (no < 0){
@@ -59,12 +64,20 @@ int create_socket(int portno){
   return sockfd;
 }
 
-void getHttpRequest(int sockfd, char *buf){
+int getHttpRequest(int sockfd, char *buf){
   int numbytes;
 
-  check((numbytes = recv(sockfd, buf, 1023, 0)), "Error while receiving HTTP Request");
+  numbytes = recv(sockfd, buf, 1023, 0);
 
+  if (numbytes == -1) {
+    if ((errno == EAGAIN) | (errno == EWOULDBLOCK)) {
+      printf("\n\n!!!RECV Timeout reached on socket no: %d!!!\n\n", sockfd);
+    }
+    return 0;
+  }
   buf[numbytes] = '\0';
+  printf("numbytes: %d\n", numbytes);
+  return 1;
 }
 
 int checkMethod (char *method) {
@@ -91,7 +104,7 @@ int isDirectoryExists(const char *path) {
 
 int checkFilename (char *filename) {
   printf("\n\n-----------------Checking requested file status-------------------\n\n");
-  char filepath[100];
+  char filepath[1024];
 
   strcpy(filepath, DOC_ROOT);
   strcat(filepath, filename);
@@ -109,11 +122,6 @@ int checkFilename (char *filename) {
     }
 }
 
-
-void writeln_to_socket(int sockfd, const char *message) {
-  write(sockfd, message, strlen(message));
-  write(sockfd, "\r\n", 2);
-}
 
 char *read_file(FILE *fpipe) {
   printf("\n\n-----------------Reading content of requested file-------------------\n\n");
@@ -140,73 +148,81 @@ char *read_file(FILE *fpipe) {
   return buf;
 }
 
-char* getFileType (char *filename) {
-  printf("\n\n-----------------Getting file type-------------------\n\n");
-  char* filetype = (char*)malloc(15*sizeof(char));
+unsigned char *read_image(FILE* fp){
 
-  if (strstr(filename, "html")) {
-    filetype = "text/html";
-  } else if (strstr(filename, "jpeg")) {
-    filetype = "image/jpeg";
-  } else if (strstr(filename, "gif")) {
-    filetype = "image/gif";
-  } else if (strstr(filename, "png")) {
-    filetype = "image/png";
-  } else if (strstr(filename, "txt")) {
-    filetype = "text/plain";
-  } else if (strstr(filename, "jpg")) {
-    filetype = "image/gif";
-  }
+  fseek(fp, 0L, SEEK_END);
+  int size = ftell(fp);
 
-  return filetype;
+  rewind(fp);
+
+  unsigned char *buf = (unsigned char *)malloc(size+1);
+
+  int c = fread(buf, 1, size, fp);
+  buf[size] = '\0';
+  return buf;
 }
 
-void sendResponse (int sockfd, int file_status, char *filename) {
-  printf("\n\n-----------------Sending Response-------------------\n\n");
-  char header[1024], length_str[100], fpath[100];
-  char *content;
-  FILE *fp;
+char *getFileType (char *filename) {
+  char *buf = (char *)malloc(12*sizeof(char));
+  printf("\n\n-----------------Getting file type-------------------\n\n");
 
-  strcpy(fpath, DOC_ROOT);
-  strcat(fpath, filename);
+  if (strstr(filename, "html")) {
+    buf = "text/html";
+  } else if (strstr(filename, "jpeg")) {
+    buf = "image/jpeg";
+  } else if (strstr(filename, "gif")) {
+    buf = "image/gif";
+  } else if (strstr(filename, "png")) {
+    buf = "image/png";
+  } else if (strstr(filename, "txt")) {
+    buf = "text/plain";
+  } else if (strstr(filename, "jpg")) {
+    buf = "image/gif";
+  }
 
-  if (file_status == 1) { // Send 200 OK Response
-    strcpy(header, "HTTP/1.1 200 OK\n");
+  return buf;
+}
 
-    char *filetype = getFileType(filename);
-    strcat(header, "Content-Type: ");
-    strcat(header, filetype);
-    strcat(header, "\n");
+char *buildHeader(int file_status, char* filename, int content_length){
+  char buf[1024], length_str[100];
+  char *header;
 
-    if (strstr(filetype, "image")){
-      fp = fopen(fpath, "rb");
-      content = read_file(fp);
-      fclose(fp);
-    } else {
-      fp = fopen(fpath, "r");
-      content = read_file(fp);
-      fclose(fp);
+  char *filetype;
+  filetype = getFileType(filename);
+
+  sprintf(length_str, "%d", content_length);
+
+  switch(file_status){
+    case 1:
+      strcpy(buf, "HTTP/1.1 200 OK\n");
+      strcat(buf, "Content-Type: ");
+      strcat(buf, filetype);
+      strcat(buf, "\n");
+      break;
+    case 2:
+      strcpy(buf, "HTTP/1.1 404 File Not Found\n");
+      strcat(buf, "Content-Type: text/html\n");
+      break;
+    case 3:
+      strcpy(buf, "HTTP/1.1 403 Access denied - no permissions\n");
+      strcat(buf, "Content-Type: text/html\n");
+      break;
+    case 4:
+      strcpy(buf, "HTTP/1.1 400 Bad Request - cannot request a directory\n");
+      strcat(buf, "Content-Type: text/html\n");
+      break;
+    case 5:
+      strcpy(buf, "HTTP/1.1 400 Bad Request - cannot request a directory\n");
+      strcat(buf, "Content-Type: text/html\n");
+      break;
     }
 
+  strcat(buf, "Content-Length: ");
+  strcat(buf, length_str);
+  strcat(buf, "\n");
 
-    sprintf(length_str, "%d", (int)strlen(content));
-    strcat(header, "Content-Length: ");
-    strcat(header, length_str);
-    strcat(header, "\n");
-
-  } else if (file_status == 2) { // Send 404 BAD response
-    strcpy(header, "HTTP/1.1 404 File Not Found\n");
-    content = "<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\n<html>\n<head>\n<title>404 Not Found</title>\n</head>\n<body>\n<h1>Not Found</h1>\n<p>The requested URL was not found on this server.</p>\n</body>\n</html>";
-  } else if (file_status == 3) { // Send 403 BAD response
-    strcpy(header, "HTTP/1.1 403 Access denied - no permissions\n");
-    content = "<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\n<html>\n<head>\n<title>403 Access Denied</title>\n</head>\n<body>\n<h1>Access Denied</h1>\n<p>You are not authorized to access the requested file: necessary permissions are not granted.</p>\n</body>\n</html>";
-  } else if (file_status == 4) { // Send 400 BAD response
-    strcpy(header, "HTTP/1.1 400 Bad Request - cannot request a directory\n");
-    content = "<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\n<html>\n<head>\n<title>400 Bad Request</title>\n</head>\n<body>\n<h1>Bad Request</h1>\n<p>A directory cannot be requested.</p>\n</body>\n</html>";
-  } else if (file_status == 5) { // Send 400 BAD response
-    strcpy(header, "HTTP/1.1 400 Bad Request - cannot request a directory\n");
-    content = "<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\n<html>\n<head>\n<title>400 Bad Request</title>\n</head>\n<body>\n<h1>Bad Request</h1>\n<p>This server only handles GET requests.</p>\n</body>\n</html>";
-  }
+  strcat(buf, "Connection: close");
+  strcat(buf, "\n");
 
   time_t now = time(&now);
   if (now == -1) {
@@ -219,59 +235,156 @@ void sendResponse (int sockfd, int file_status, char *filename) {
 
   char *time = asctime(ptm);
 
-  strcat(header, "Date: ");
-  strcat(header, time);
-  strcat(header, "\n");
+  strcat(buf, "Date: ");
+  strcat(buf, time);
+  strcat(buf, "\n");
 
-  int numbytes;
+
+
+
+  header = (char *)malloc((strlen(buf)+1)*sizeof(char));
+  sprintf(header, "%s", buf);
+
+  return header;
+
+}
+
+void* getContent(int file_status, char* filename){
+
+  char *temp;
+  FILE *fp;
+  char fpath[1024];
+  char* filetype;
+  char* content;
+  unsigned char* image_content;
+
+  strcpy(fpath, DOC_ROOT);
+  strcat(fpath, filename);
+
+  filetype = getFileType(filename);
+
+  switch(file_status){
+    case 1:
+      if (strstr(filetype, "image")){
+        fp = fopen(fpath, "rb");
+        image_content = read_image(fp);
+        fclose(fp);
+      } else {
+        fp = fopen(fpath, "r");
+        content = read_file(fp);
+        fclose(fp);
+      }
+      break;
+    case 2:
+      content = "<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\n<html>\n<head>\n<title>404 Not Found</title>\n</head>\n<body>\n<h1>Not Found</h1>\n<p>The requested URL was not found on this server.</p>\n</body>\n</html>";
+      break;
+    case 3:
+      content = "<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\n<html>\n<head>\n<title>403 Access Denied</title>\n</head>\n<body>\n<h1>Access Denied</h1>\n<p>You are not authorized to access the requested file: necessary permissions are not granted.</p>\n</body>\n</html>";
+      break;
+    case 4:
+      content = "<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\n<html>\n<head>\n<title>400 Bad Request</title>\n</head>\n<body>\n<h1>Bad Request</h1>\n<p>A directory cannot be requested.</p>\n</body>\n</html>";
+      break;
+    case 5:
+      content = "<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\n<html>\n<head>\n<title>400 Bad Request</title>\n</head>\n<body>\n<h1>Bad Request</h1>\n<p>This server only handles GET requests.</p>\n</body>\n</html>";
+      break;
+    }
+
+    if((strstr(filetype, "image") != NULL) & (file_status == 1)){
+      return (void *) image_content;
+    }
+    return (void *)content;
+}
+
+void sendResponse (int sockfd, int file_status, char *filename) {
+  printf("\n\n-----------------Sending Response-------------------\n\n");
+
+  unsigned char* image_content;
+  char *content, *header;
+  char* filetype;
+  int numbytes, filesize;
+  FILE *fp;
+  char fpath[1024];
+  strcpy(fpath, DOC_ROOT);
+  strcat(fpath, filename);
+
+  filetype = getFileType(filename);
+
+  if ((strstr(filetype, "image") != NULL) & (file_status == 1)){
+    image_content = (unsigned char*)getContent(file_status, filename);
+    fp = fopen(fpath, "rb");
+    fseek(fp, 0L, SEEK_END);
+    filesize = ftell(fp);
+    fclose(fp);
+  } else {
+    content = (char *)getContent(file_status, filename);
+    filesize = strlen(content);
+  }
+
+  puts(content);
+  header = buildHeader(file_status, filename, filesize);
+  //printf("Socket: %d", sockfd);
+  //puts(header);
+
 
   if((numbytes = send(sockfd, header, strlen(header), 0)) == -1) {
     printf("\n\nError while sending HTTP response header.\n");
     exit(0);
   }
+  printf("Sent header");
 
-  if((numbytes = send(sockfd, content, strlen(content), 0)) == -1) {
-    printf("\n\nError while sending HTTP response content.\n");
-    exit(0);
+  if((strstr(filetype, "image") != NULL) & (file_status == 1)){
+    if((numbytes = send(sockfd, image_content, filesize, 0)) == -1) {
+      printf("\n\nError while sending HTTP response content.\n");
+      exit(0);
+    }
+  } else {
+    if((numbytes = send(sockfd, content, strlen(content), 0)) == -1) {
+      printf("\n\nError while sending HTTP response content.\n");
+      exit(0);
+    }
   }
-
   return;
-
-
 }
 
 
-void connectionHandler (int sockfd) {
-  printf("\n\n-----------------Handling received connection-------------------\n\n");
+void *connectionHandler (void *sfd) {
+  int sockfd = * (int *)sfd;
+  printf("\n\n-----------------Handling received connection on socket no: %d-------------------\n\n", sockfd);
+
+
   char buf[1024], *first_line, *method, filename[1024], *initial;
   int file_status;
 
-  getHttpRequest(sockfd, buf);
 
-  char *req = strdup(buf);
+  int status = getHttpRequest(sockfd, buf);
 
-  first_line = strsep(&req, "\n");
+    char *req = strdup(buf);
 
-  method = strsep(&first_line, " ");
+    first_line = strsep(&req, "\n");
 
-  initial = strsep(&first_line, " ");
-  strcpy(filename, initial);
+    method = strsep(&first_line, " ");
 
-  if (strcmp(filename, "/") == 0) {
-    strcpy(filename, "/index.html");
-  }
+    initial = strsep(&first_line, " ");
+    strcpy(filename, initial);
 
-  printf("\n Request Method: %s", method);
-  printf("\n Requested File: %s", filename);
+    if (strcmp(filename, "/") == 0) {
+      strcpy(filename, "/index.html");
+    }
 
-  if (checkMethod(method) == -1){
-    file_status = 5;
-  } else {
-    file_status = checkFilename(filename);
-  }
+    printf("\n HTTP method: %s", method);
+    printf("\n Requested file: %s", filename);
+
+    if (checkMethod(method) == -1){
+      file_status = 5;
+    } else {
+      file_status = checkFilename(filename);
+    }
+
 
   sendResponse(sockfd, file_status, filename);
-  return;
+  close(sockfd);
+  pthread_exit(NULL);
+  //pthread_exit(NULL);
 
 }
 
@@ -300,17 +413,25 @@ int main(int argc, char* argv[]){
   struct sockaddr_in client_addr;
   int cli_len = sizeof(client_addr);
 
+  int pthread_ctr = 0;
+  pthread_t **thread_pool = (pthread_t **)malloc(MAXTHREADS * sizeof(pthread_t*));
 
-  while (1) {
+
+  for (pthread_ctr = 0; pthread_ctr < MAXTHREADS; pthread_ctr++) {
     int newsockfd;
     check((newsockfd = accept(sockfd, (struct sockaddr *) &client_addr, (socklen_t *) &cli_len)), "Error accepting connection");
     printf("\nNew socket: %d\n", newsockfd);
 
-    connectionHandler(newsockfd);
+    thread_pool[pthread_ctr] = (pthread_t *) malloc(sizeof(pthread_t));
 
-    close(newsockfd);
+    if (pthread_create(thread_pool[pthread_ctr], NULL, connectionHandler, &newsockfd)<0) {
+      puts("Error creating thread");
+      exit(0);
+    };
 
   }
+
+  pthread_join(*thread_pool[99], NULL);
   close(sockfd);
 
 }
